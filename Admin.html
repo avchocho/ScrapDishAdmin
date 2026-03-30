@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ScrapDish Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+body { font-family: Arial; background:#f5f5f5; padding:40px }
+.card { background:white; padding:15px; margin-bottom:12px; border-radius:8px }
+button { margin-right:8px; padding:6px 10px }
+.delete { background:#e53935;color:white;border:none }
+.hide { background:#555;color:white;border:none }
+.section { margin-top:40px }
+</style>
+
+</head>
+
+<body>
+
+<h1>ScrapDish Admin Portal</h1>
+
+<div id="login">
+<input id="email" placeholder="Admin email">
+<input id="password" type="password" placeholder="Password">
+<button onclick="login()">Login</button>
+</div>
+
+<div id="dashboard" style="display:none">
+
+<div class="section">
+<h2>Reported Recipes</h2>
+<div id="recipes"></div>
+</div>
+
+<div class="section">
+<h2>Reported Reviews</h2>
+<div id="reviews"></div>
+</div>
+
+<div class="section" id="detail" style="display:none">
+<h2>Content Detail</h2>
+<div id="detailContent"></div>
+</div>
+
+</div>
+
+<script>
+
+const supabaseUrl = "https://jfgdujqxtbbqpzvmwjmc.supabase.co";
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpmZ2R1anF4dGJicXB6dm13am1jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA4MDIwMTcsImV4cCI6MjA3NjM3ODAxN30.p8Jt_QBQ9SyocPrh6B1YNotDK0UZUknC-CWk5foQPD4";
+
+const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+async function login(){
+const email=document.getElementById("email").value
+const password=document.getElementById("password").value
+
+const {error}=await supabase.auth.signInWithPassword({email,password})
+if(error){alert("login failed");return}
+
+document.getElementById("login").style.display="none"
+document.getElementById("dashboard").style.display="block"
+
+loadRecipes()
+loadReviews()
+}
+
+async function loadRecipes(){
+const {data}=await supabase
+.from("community_recipes")
+.select("*")
+.gt("reports_count",0)
+
+const container=document.getElementById("recipes")
+container.innerHTML=""
+
+for(const r of data){
+
+const reasons=await getReasons("recipe",r.id)
+
+const div=document.createElement("div")
+div.className="card"
+
+div.innerHTML=`
+<b>${r.title}</b><br>
+Reports: ${r.reports_count}<br>
+Hidden: ${r.is_hidden}<br>
+Reasons:<br>
+${reasons}<br><br>
+
+<button class="hide" onclick="toggle('community_recipes','${r.id}',${!r.is_hidden})">
+${r.is_hidden?"Restore":"Hide"}
+</button>
+
+<button class="delete" onclick="deleteContent('community_recipes','${r.id}','recipe')">
+Delete
+</button>
+
+<button onclick="viewDetail('recipe','${r.id}')">
+View Details
+</button>
+`
+
+container.appendChild(div)
+}
+}
+
+async function loadReviews(){
+const {data}=await supabase
+.from("recipe_reviews")
+.select("*")
+.gt("reports_count",0)
+
+const container=document.getElementById("reviews")
+container.innerHTML=""
+
+for(const r of data){
+
+const reasons=await getReasons("review",r.id)
+
+const div=document.createElement("div")
+div.className="card"
+
+div.innerHTML=`
+<b>${r.comment}</b><br>
+Reports: ${r.reports_count}<br>
+Hidden: ${r.is_hidden}<br>
+Reasons:<br>
+${reasons}<br><br>
+
+<button class="hide" onclick="toggle('recipe_reviews','${r.id}',${!r.is_hidden})">
+${r.is_hidden?"Restore":"Hide"}
+</button>
+
+<button class="delete" onclick="deleteContent('recipe_reviews','${r.id}','review')">
+Delete
+</button>
+
+<button onclick="viewDetail('review','${r.id}')">
+View Details
+</button>
+`
+
+container.appendChild(div)
+}
+}
+
+async function toggle(table,id,value){
+await supabase.from(table).update({is_hidden:value}).eq("id",id)
+loadRecipes()
+loadReviews()
+}
+
+async function deleteContent(table,id,type){
+
+if(!confirm("Delete content?")) return
+
+await supabase
+.from("content_reports")
+.delete()
+.eq("content_id",id)
+.eq("content_type",type)
+
+await supabase.from(table).delete().eq("id",id)
+
+loadRecipes()
+loadReviews()
+}
+
+async function getReasons(type,id){
+const {data}=await supabase
+.from("content_reports")
+.select("reason")
+.eq("content_type",type)
+.eq("content_id",id)
+
+let map={}
+for(const r of data){
+map[r.reason]=(map[r.reason]||0)+1
+}
+
+let html=""
+for(const key in map){
+html+=`• ${key} (${map[key]})<br>`
+}
+return html
+}
+
+async function viewDetail(type,id){
+
+document.getElementById("detail").style.display="block"
+
+let content
+
+if(type==="recipe"){
+const {data}=await supabase
+.from("community_recipes")
+.select("*")
+.eq("id",id)
+.single()
+content=data
+}else{
+const {data}=await supabase
+.from("recipe_reviews")
+.select("*")
+.eq("id",id)
+.single()
+content=data
+}
+
+let poster=null
+
+if(content.user_id){
+const {data}=await supabase
+.from("user_profiles")
+.select("display_name,email")
+.eq("id",content.user_id)
+.single()
+
+poster=data
+}
+
+const {data:reports}=await supabase
+.from("content_reports")
+.select("*")
+.eq("content_type",type)
+.eq("content_id",id)
+
+let reportHtml=""
+for(const r of reports){
+reportHtml+=`
+<div class="card">
+Reason: ${r.reason}<br>
+Reporter: ${r.reporter_user_id}<br>
+Date: ${r.created_at}
+</div>
+`
+}
+
+document.getElementById("detailContent").innerHTML=`
+
+${poster?`
+<b>Poster</b><br>
+Name: ${poster.display_name}<br>
+Email: ${poster.email}<br><br>
+`:""}
+
+<b>Content</b><br>
+${type==="recipe"?`
+${content.title}<br>
+${content.description}<br>
+${content.instructions}
+`:
+`
+Rating: ${content.rating}<br>
+${content.comment}
+`}
+
+<br><br>
+<b>Reports</b><br>
+${reportHtml}
+
+`
+}
+
+</script>
+
+</body>
+</html>
